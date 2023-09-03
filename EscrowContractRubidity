@@ -1,81 +1,97 @@
-module EthscriptionsEscrower
-  struct Layout
-    ethscriptionReceivedOnBlockNumber: Map<Address, Map<Bytes32, Uint256>>
+module EthscriptionsEscrower {
+  struct Layout {
+    ethscriptionReceivedOnBlockNumber: Map<Address, Map<Bytes32, Uint256>>;
+  }
 
-internal mutable STORAGE_SLOT := keccak256('ethscriptions.contracts.storage.EthscriptionsEscrowerStorage')
+  storage mutable STORAGE_SLOT := keccak256('ethscriptions.contracts.storage.EthscriptionsEscrowerStorage');
 
-internal pure function s(): Layout
-  slot := STORAGE_SLOT
-  return
+  internal pure function s(): Layout {
+    slot := STORAGE_SLOT;
+    return;
+  }
 
-error EthscriptionNotDeposited()
-error EthscriptionAlreadyReceivedFromSender()
-error InvalidEthscriptionLength()
-error AdditionalCooldownRequired(additionalBlocksNeeded: Uint256)
+  error EthscriptionNotDeposited();
+  error EthscriptionAlreadyReceivedFromSender();
+  error InvalidEthscriptionLength();
+  error AdditionalCooldownRequired(additionalBlocksNeeded: Uint256);
 
-event ethscriptions_protocol_TransferEthscriptionForPreviousOwner(previousOwner: Address, recipient: Address, id: Bytes32)
+  event TransferEthscriptionForPreviousOwner(previousOwner: Address, recipient: Address, id: Bytes32);
+  event PotentialEthscriptionDeposited(owner: Address, potentialEthscriptionId: Bytes32);
+  event PotentialEthscriptionWithdrawn(owner: Address, potentialEthscriptionId: Bytes32);
 
-event PotentialEthscriptionDeposited(owner: Address, potentialEthscriptionId: Bytes32)
+  public constant ETHSCRIPTION_TRANSFER_COOLDOWN_BLOCKS: Uint256 = 5;
 
-event PotentialEthscriptionWithdrawn(owner: Address, potentialEthscriptionId: Bytes32)
+  internal function _transferEthscription(previousOwner: Address, to: Address, ethscriptionId: Bytes32) {
+    _validateTransferEthscription(previousOwner, to, ethscriptionId);
 
-public constant ETHSCRIPTION_TRANSFER_COOLDOWN_BLOCKS: Uint256 = 5
+    emit TransferEthscriptionForPreviousOwner(previousOwner, to, ethscriptionId);
 
-internal function _transferEthscription(previousOwner: Address, to: Address, ethscriptionId: Bytes32)
-  _validateTransferEthscription(previousOwner, to, ethscriptionId)
+    _afterTransferEthscription(previousOwner, to, ethscriptionId);
+  }
 
-  emit ethscriptions_protocol_TransferEthscriptionForPreviousOwner(previousOwner, to, ethscriptionId)
+  public function withdrawEthscription(ethscriptionId: Bytes32) {
+    _transferEthscription(msg.sender, msg.sender, ethscriptionId);
 
-  _afterTransferEthscription(previousOwner, to, ethscriptionId)
+    emit PotentialEthscriptionWithdrawn(msg.sender, ethscriptionId);
+  }
 
-public function withdrawEthscription(ethscriptionId: Bytes32)
-  _transferEthscription(msg.sender, msg.sender, ethscriptionId)
+  internal function _onPotentialEthscriptionDeposit(previousOwner: Address, userCalldata: Bytes) {
+    if (userCalldata.length != 32) {
+      revert InvalidEthscriptionLength();
+    }
 
-  emit PotentialEthscriptionWithdrawn(msg.sender, ethscriptionId)
+    let potentialEthscriptionId: Bytes32 = Bytes32.decode(userCalldata);
 
-internal function _onPotentialEthscriptionDeposit(previousOwner: Address, userCalldata: Bytes)
-  if userCalldata.length != 32
-    revert InvalidEthscriptionLength()
+    if (userEthscriptionPossiblyStored(previousOwner, potentialEthscriptionId)) {
+      revert EthscriptionAlreadyReceivedFromSender();
+    }
 
-  let potentialEthscriptionId: Bytes32 = Bytes32.decode(userCalldata)
+    EthscriptionsEscrowerStorage.s().ethscriptionReceivedOnBlockNumber[previousOwner][potentialEthscriptionId] = block.number;
 
-  if userEthscriptionPossiblyStored(previousOwner, potentialEthscriptionId)
-    revert EthscriptionAlreadyReceivedFromSender()
+    emit PotentialEthscriptionDeposited(previousOwner, potentialEthscriptionId);
+  }
 
-  EthscriptionsEscrowerStorage.s().ethscriptionReceivedOnBlockNumber[previousOwner][potentialEthscriptionId] = block.number
+  internal function _validateTransferEthscription(previousOwner: Address, to: Address, ethscriptionId: Bytes32) {
+    if (userEthscriptionDefinitelyNotStored(previousOwner, ethscriptionId)) {
+      revert EthscriptionNotDeposited();
+    }
 
-  emit PotentialEthscriptionDeposited(previousOwner, potentialEthscriptionId)
+    let blocksRemaining: Uint256 = blocksRemainingUntilValidTransfer(previousOwner, ethscriptionId);
 
-internal function _validateTransferEthscription(previousOwner: Address, to: Address, ethscriptionId: Bytes32)
-  if userEthscriptionDefinitelyNotStored(previousOwner, ethscriptionId)
-    revert EthscriptionNotDeposited()
+    if (blocksRemaining != 0) {
+      revert AdditionalCooldownRequired(blocksRemaining);
+    }
+  }
 
-  let blocksRemaining: Uint256 = blocksRemainingUntilValidTransfer(previousOwner, ethscriptionId)
+  internal function _afterTransferEthscription(previousOwner: Address, to: Address, ethscriptionId: Bytes32) {
+    delete EthscriptionsEscrowerStorage.s().ethscriptionReceivedOnBlockNumber[previousOwner][ethscriptionId];
+  }
 
-  if blocksRemaining != 0
-    revert AdditionalCooldownRequired(blocksRemaining)
+  public function blocksRemainingUntilValidTransfer(previousOwner: Address, ethscriptionId: Bytes32): Uint256 {
+    let receivedBlockNumber: Uint256 = EthscriptionsEscrowerStorage.s().ethscriptionReceivedOnBlockNumber[previousOwner][ethscriptionId];
 
-internal function _afterTransferEthscription(previousOwner: Address, to: Address, ethscriptionId: Bytes32)
-  delete EthscriptionsEscrowerStorage.s().ethscriptionReceivedOnBlockNumber[previousOwner][ethscriptionId]
+    if (receivedBlockNumber == 0) {
+      revert EthscriptionNotDeposited();
+    }
 
-public function blocksRemainingUntilValidTransfer(previousOwner: Address, ethscriptionId: Bytes32): Uint256
-  let receivedBlockNumber: Uint256 = EthscriptionsEscrowerStorage.s().ethscriptionReceivedOnBlockNumber[previousOwner][ethscriptionId]
+    let blocksPassed: Uint256 = block.number - receivedBlockNumber;
 
-  if receivedBlockNumber == 0
-    revert EthscriptionNotDeposited()
+    if (blocksPassed < ETHSCRIPTION_TRANSFER_COOLDOWN_BLOCKS) {
+      return ETHSCRIPTION_TRANSFER_COOLDOWN_BLOCKS - blocksPassed;
+    } else {
+      return 0;
+    }
+  }
 
-  let blocksPassed: Uint256 = block.number - receivedBlockNumber
+  public function userEthscriptionDefinitelyNotStored(owner: Address, ethscriptionId: Bytes32): Bool {
+    return EthscriptionsEscrowerStorage.s().ethscriptionReceivedOnBlockNumber[owner][ethscriptionId] == 0;
+  }
 
-  if blocksPassed < ETHSCRIPTION_TRANSFER_COOLDOWN_BLOCKS
-    return ETHSCRIPTION_TRANSFER_COOLDOWN_BLOCKS - blocksPassed
-  else
-    return 0
+  public function userEthscriptionPossiblyStored(owner: Address, ethscriptionId: Bytes32): Bool {
+    return !userEthscriptionDefinitelyNotStored(owner, ethscriptionId);
+  }
 
-public function userEthscriptionDefinitelyNotStored(owner: Address, ethscriptionId: Bytes32): Bool
-  return EthscriptionsEscrowerStorage.s().ethscriptionReceivedOnBlockNumber[owner][ethscriptionId] == 0
-
-public function userEthscriptionPossiblyStored(owner: Address, ethscriptionId: Bytes32): Bool
-  return not userEthscriptionDefinitelyNotStored(owner, ethscriptionId)
-
-fallback()
-  _onPotentialEthscriptionDeposit(msg.sender, msg.data)
+  fallback() {
+    _onPotentialEthscriptionDeposit(msg.sender, msg.data);
+  }
+}
