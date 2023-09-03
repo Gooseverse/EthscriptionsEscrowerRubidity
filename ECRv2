@@ -1,47 +1,43 @@
-module EthscriptionsEscrower
-  struct Ethscription
-    ethscriptionId: Bytes32
-    owner: Address
-    depositBlockNumber: Uint256
+module EthscriptionsEscrower {
+  struct Ethscription {
+    ethscriptionId: Bytes32;
+    owner: Address;
+    depositBlockNumber: Uint256;
+  }
 
-  internal mutable ETHSCRIPTIONS: Map<Bytes32, Ethscription>
+  // Use `storage` keyword to specify storage data structures
+  storage mutable ETHSCRIPTIONS: Map<Bytes32, Ethscription>;
+  storage mutable SETTLED: Map<Bytes32, Bool>;
 
-  internal pure function ethscriptions(): Map<Bytes32, Ethscription>
-    return
+  event EthscriptionDeposited(owner: Address, ethscriptionId: Bytes32);
+  event EthscriptionTransferred(previousOwner: Address, recipient: Address, ethscriptionId: Bytes32);
 
-  internal pure function ethscriptionSettled(): Map<Bytes32, Bool>
-    return
+  public constant ETHSCRIPTION_TRANSFER_COOLDOWN_BLOCKS: Uint256 = 5;
 
-  internal mutable SETTLED: Map<Bytes32, Bool>
+  storage mutable STORAGE_SLOT := keccak256('ethscriptions.contracts.storage.EthscriptionsEscrowerStorage');
 
-  event EthscriptionDeposited(owner: Address, ethscriptionId: Bytes32)
-  event EthscriptionTransferred(previousOwner: Address, recipient: Address, ethscriptionId: Bytes32)
+  // Define the Layout struct
+  struct Layout {
+    slot: StorageSlot;
+  }
 
-  public constant ETHSCRIPTION_TRANSFER_COOLDOWN_BLOCKS: Uint256 = 5
+  public function depositEthscription(ethscriptionId: Bytes32) {
+    require(!ethscriptionSettled()[ethscriptionId], 'Ethscription already settled');
+    require(ethscriptions()[ethscriptionId].owner == address(0), 'Ethscription already deposited');
 
-  internal mutable STORAGE_SLOT := keccak256('ethscriptions.contracts.storage.EthscriptionsEscrowerStorage')
+    ethscriptions()[ethscriptionId] = Ethscription(ethscriptionId, msg.sender, block.number);
+    ethscriptionSettled()[ethscriptionId] = false;
 
-  internal pure function s(): Layout
-    slot := STORAGE_SLOT
-    return
+    emit EthscriptionDeposited(msg.sender, ethscriptionId);
+  }
 
-  public function depositEthscription(ethscriptionId: Bytes32)
-    require not ethscriptionSettled()[ethscriptionId], 'Ethscription already settled'
-    require ethscriptions()[ethscriptionId].owner == address(0), 'Ethscription already deposited'
+  public function transferEthscription(ethscriptionId: Bytes32, recipient: Address) {
+    require(ethscriptions()[ethscriptionId].owner == msg.sender, 'Only owner can transfer');
+    require(!ethscriptionSettled()[ethscriptionId], 'Ethscription settled');
+    require(block.number >= ethscriptions()[ethscriptionId].depositBlockNumber + ETHSCRIPTION_TRANSFER_COOLDOWN_BLOCKS, 'Transfer cooldown not met');
 
-    ethscriptions()[ethscriptionId] = Ethscription(ethscriptionId, msg.sender, block.number)
-    ethscriptionSettled()[ethscriptionId] = false
+    ethscriptions()[ethscriptionId].owner = recipient;
 
-    emit EthscriptionDeposited(msg.sender, ethscriptionId)
-  end
-
-  public function transferEthscription(ethscriptionId: Bytes32, recipient: Address)
-    require ethscriptions()[ethscriptionId].owner == msg.sender, 'Only owner can transfer'
-    require not ethscriptionSettled()[ethscriptionId], 'Ethscription settled'
-    require block.number >= ethscriptions()[ethscriptionId].depositBlockNumber + ETHSCRIPTION_TRANSFER_COOLDOWN_BLOCKS, 'Transfer cooldown not met'
-
-    ethscriptions()[ethscriptionId].owner = recipient
-
-    emit EthscriptionTransferred(msg.sender, recipient, ethscriptionId)
-  end
-end
+    emit EthscriptionTransferred(msg.sender, recipient, ethscriptionId);
+  }
+}
