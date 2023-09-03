@@ -1,4 +1,4 @@
-# Ethscriptions Escrower Smart Contract
+# Ethscriptions ECR v2
 
 The Ethscriptions Escrower is a smart contract designed to manage the transfer of Ethscriptions (Ethereum-based subscriptions) between users while enforcing a cooldown period between transfers. It uses Rubidity, a language for writing secure Ethereum smart contracts.
 
